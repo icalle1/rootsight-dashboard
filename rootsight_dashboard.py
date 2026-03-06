@@ -252,7 +252,13 @@ section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] { color: #1
 # ============================================================================
 
 def init_state():
-    for k, v in [("current_page","Overview"),("messages",[]),("api_key","")]:
+    # Auto-load Gemini key from Streamlit Secrets if available
+    secret_key = ""
+    try:
+        secret_key = st.secrets.get("GEMINI_API_KEY", "")
+    except Exception:
+        pass
+    for k, v in [("current_page","Overview"),("messages",[]),("api_key", secret_key)]:
         if k not in st.session_state:
             st.session_state[k] = v
 
@@ -304,17 +310,83 @@ def fallback(msg, root_df, env_df):
     ml = msg.lower()
     avg_v = root_df.groupby("tank")["root_volume"].last().mean()
     avg_r = root_df["growth_rate"].mean()
-    if any(w in ml for w in ["root","growth","develop"]):
-        s = "excellent" if avg_r > 2.5 else "on track" if avg_r > 1.5 else "below target"
-        return f"🌱 **Root Status**\nAvg volume (8 tanks): **{avg_v:.1f} cm³**\nAvg growth rate: **{avg_r:.2f} cm/day** — {s}\n\n💡 Add Gemini API key for per-tank detail."
-    if any(w in ml for w in ["env","temp","humid"]):
+    latest = root_df.groupby("tank").last().reset_index()
+
+    if any(w in ml for w in ["root","growth","develop","volume","length","biomass"]):
+        s = "excellent 🟢" if avg_r > 2.5 else "on track 🟡" if avg_r > 1.5 else "below target 🔴"
+        best = latest.loc[latest["root_volume"].idxmax(), "tank"]
+        worst = latest.loc[latest["root_volume"].idxmin(), "tank"]
+        return (f"🌱 **Root Development Status**\n\n"
+                f"• Avg volume across 8 tanks: **{avg_v:.1f} cm³**\n"
+                f"• Avg growth rate: **{avg_r:.2f} cm/day** — {s}\n"
+                f"• Best performing tank: **{best}** ({latest['root_volume'].max():.1f} cm³)\n"
+                f"• Needs attention: **{worst}** ({latest['root_volume'].min():.1f} cm³)\n\n"
+                f"Target root volume is ≥300 cm³. You're at {(avg_v/300*100):.0f}% of target.")
+
+    if any(w in ml for w in ["env","temp","humid","shelf","condition","climate","upper","lower"]):
         u = env_df[env_df["shelf"]=="Upper"].iloc[-1]
         l = env_df[env_df["shelf"]=="Lower"].iloc[-1]
-        return f"🌡️ **Environment**\n**Upper shelf:** {u['temperature']}°C · {u['humidity']}% RH\n**Lower shelf:** {l['temperature']}°C · {l['humidity']}% RH\nOptimal: 20–26°C, 60–75% RH"
-    if any(w in ml for w in ["harvest","when","ready"]):
-        days = max(5, round((300 - avg_v) / (avg_r * 7)))
-        return f"📅 **Harvest ETA**\nAt {avg_r:.2f} cm/day avg growth, estimated **{days} days** to target (≥300 cm³).\nCurrent avg: {avg_v:.1f} cm³."
-    return "🌿 Ask me about: root development · shelf conditions · harvest ETA · issue detection\n💡 Add Gemini key for full AI."
+        u_tok = "✅" if 20<=u["temperature"]<=26 else "⚠️"
+        l_tok = "✅" if 20<=l["temperature"]<=26 else "⚠️"
+        u_hok = "✅" if 60<=u["humidity"]<=75 else "⚠️"
+        l_hok = "✅" if 60<=l["humidity"]<=75 else "⚠️"
+        return (f"🌡️ **Shelf Environment**\n\n"
+                f"**🔼 Upper Shelf (Tanks 1–4)**\n"
+                f"• Temperature: {u['temperature']}°C {u_tok}\n"
+                f"• Humidity: {u['humidity']}% {u_hok}\n\n"
+                f"**🔽 Lower Shelf (Tanks 5–8)**\n"
+                f"• Temperature: {l['temperature']}°C {l_tok}\n"
+                f"• Humidity: {l['humidity']}% {l_hok}\n\n"
+                f"Optimal ranges: 20–26°C · 60–75% RH")
+
+    if any(w in ml for w in ["harvest","when","ready","days","time"]):
+        days = max(3, round((300 - avg_v) / max(avg_r * 7, 1)))
+        pct = min(100, (avg_v/300*100))
+        return (f"📅 **Harvest Prediction**\n\n"
+                f"• Current avg volume: **{avg_v:.1f} cm³** ({pct:.0f}% of target)\n"
+                f"• Growth rate: **{avg_r:.2f} cm/day**\n"
+                f"• Estimated days to harvest: **{days} days**\n\n"
+                f"{'✅ Getting close!' if days < 7 else '⏳ Keep monitoring daily.'}")
+
+    if any(w in ml for w in ["issue","problem","wrong","bad","concern","alert","warn","check"]):
+        low_tanks = latest[latest["root_volume"] < avg_v * 0.85]["tank"].tolist()
+        issues = f"⚠️ Tanks underperforming: {', '.join(low_tanks)}" if low_tanks else "✅ All tanks performing within normal range"
+        u = env_df[env_df["shelf"]=="Upper"].iloc[-1]
+        l = env_df[env_df["shelf"]=="Lower"].iloc[-1]
+        temp_warn = "⚠️ Upper shelf temperature is high" if u["temperature"] > 26 else ""
+        return (f"🔍 **System Diagnostic**\n\n"
+                f"**Root health:** {issues}\n"
+                f"**Environment:** {'✅ Both shelves in range' if not temp_warn else temp_warn}\n"
+                f"**Growth rate:** {'✅ On target' if avg_r > 1.5 else '⚠️ Below target — check nutrients and lighting'}\n\n"
+                f"Avg growth: {avg_r:.2f} cm/day · Avg volume: {avg_v:.1f} cm³")
+
+    if any(w in ml for w in ["hello","hi","hey","how are","good","morning","evening"]):
+        return ("👋 Hello! I'm the RootSight AI assistant.\n\n"
+                f"Quick system summary:\n"
+                f"• 8 tanks running · avg volume {avg_v:.1f} cm³\n"
+                f"• Growth rate: {avg_r:.2f} cm/day\n\n"
+                "Ask me about root development, shelf conditions, harvest timing, or any issues!")
+
+    if any(w in ml for w in ["tank 1","tank 2","tank 3","tank 4","tank 5","tank 6","tank 7","tank 8"]):
+        for tank in ALL_TANKS:
+            if tank.lower() in ml:
+                row = latest[latest["tank"]==tank].iloc[0]
+                return (f"🪴 **{tank} Status**\n\n"
+                        f"• Root volume: **{row['root_volume']:.1f} cm³**\n"
+                        f"• Root length: **{row['root_length']:.1f} cm**\n"
+                        f"• Growth rate: **{row['growth_rate']:.2f} cm/day**\n"
+                        f"• Biomass: **{row['biomass']:.1f} g**\n"
+                        f"• Shelf: {row['shelf']}")
+
+    # Generic helpful response
+    return (f"🌿 **RootSight Assistant**\n\n"
+            f"I can answer questions like:\n"
+            f"• *How are my roots developing?*\n"
+            f"• *What are the shelf conditions?*\n"
+            f"• *When is harvest ready?*\n"
+            f"• *Any issues with the tanks?*\n"
+            f"• *How is Tank 3 doing?*\n\n"
+            f"**Current snapshot:** {avg_v:.1f} cm³ avg · {avg_r:.2f} cm/day growth · 8 tanks active")
 
 # ============================================================================
 # SIDEBAR
