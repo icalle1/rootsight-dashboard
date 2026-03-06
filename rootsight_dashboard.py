@@ -285,7 +285,6 @@ def call_gemini(msg, root_df, env_df, api_key):
     u = env_df[env_df["shelf"]=="Upper"].iloc[-1]
     l = env_df[env_df["shelf"]=="Lower"].iloc[-1]
 
-    # Build full per-tank data for richer answers
     tank_summary = "\n".join([
         f"  {row['tank']} ({row['shelf']} shelf): volume={row['root_volume']:.1f}cm³, "
         f"length={row['root_length']:.1f}cm, growth={row['growth_rate']:.2f}cm/d, biomass={row['biomass']:.1f}g"
@@ -311,6 +310,7 @@ ENVIRONMENT:
 You can answer ANY question — about the data above, general hydroponics, plant science, agriculture, or anything else.
 Be helpful, specific, and conversational. Reference the actual data when relevant."""
 
+    errors = []
     for model in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]:
         try:
             r = requests.post(
@@ -324,14 +324,27 @@ Be helpful, specific, and conversational. Reference the actual data when relevan
             )
             if r.status_code == 200:
                 return r.json()["candidates"][0]["content"]["parts"][0]["text"]
-            if r.status_code == 429:
+            elif r.status_code == 429:
                 return "⏳ Rate limited — please wait 60 seconds and try again."
-            if r.status_code == 400:
-                continue  # try next model
-        except Exception:
-            continue
+            else:
+                # Capture the actual error for debugging
+                try:
+                    err_detail = r.json().get("error", {}).get("message", r.text[:200])
+                except Exception:
+                    err_detail = r.text[:200]
+                errors.append(f"{model}: HTTP {r.status_code} — {err_detail}")
+        except requests.exceptions.Timeout:
+            errors.append(f"{model}: Request timed out")
+        except Exception as e:
+            errors.append(f"{model}: {str(e)[:100]}")
 
-    return fallback(msg, root_df, env_df)
+    # Show debug info so we can diagnose
+    error_summary = "\n".join(errors)
+    return (f"⚠️ **Gemini API Debug Info**\n\n"
+            f"Key starts with: `{api_key[:8]}...`\n"
+            f"Key length: {len(api_key)} characters\n\n"
+            f"**Errors per model:**\n```\n{error_summary}\n```\n\n"
+            f"Share this message so we can diagnose the issue.")
 
 
 def fallback(msg, root_df, env_df):
