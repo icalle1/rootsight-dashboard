@@ -325,7 +325,8 @@ Be helpful, specific, and conversational. Reference the actual data when relevan
             if r.status_code == 200:
                 return r.json()["candidates"][0]["content"]["parts"][0]["text"]
             elif r.status_code == 429:
-                return "⏳ Rate limited — please wait 60 seconds and try again."
+                errors.append(f"{model}: Rate limited")
+                break  # no point trying other models, all will be rate limited
             else:
                 # Capture the actual error for debugging
                 try:
@@ -338,13 +339,8 @@ Be helpful, specific, and conversational. Reference the actual data when relevan
         except Exception as e:
             errors.append(f"{model}: {str(e)[:100]}")
 
-    # Show debug info so we can diagnose
-    error_summary = "\n".join(errors)
-    return (f"⚠️ **Gemini API Debug Info**\n\n"
-            f"Key starts with: `{api_key[:8]}...`\n"
-            f"Key length: {len(api_key)} characters\n\n"
-            f"**Errors per model:**\n```\n{error_summary}\n```\n\n"
-            f"Share this message so we can diagnose the issue.")
+    # Gemini unavailable — use local data responses
+    return fallback(msg, root_df, env_df)
 
 
 def fallback(msg, root_df, env_df):
