@@ -311,7 +311,7 @@ You can answer ANY question — about the data above, general hydroponics, plant
 Be helpful, specific, and conversational. Reference the actual data when relevant."""
 
     errors = []
-    for model in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]:
+    for model in ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-latest"]:
         try:
             r = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
