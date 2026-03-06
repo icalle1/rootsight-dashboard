@@ -284,26 +284,54 @@ def call_gemini(msg, root_df, env_df, api_key):
     latest = root_df.groupby("tank").last().reset_index()
     u = env_df[env_df["shelf"]=="Upper"].iloc[-1]
     l = env_df[env_df["shelf"]=="Lower"].iloc[-1]
-    ctx = f"""You are RootSight AI for Rezylix. Project: 8 hydroponic tanks, 2 shelves.
-Upper shelf Tanks 1-4, Lower shelf Tanks 5-8. One front camera per tank.
-Avg root volume: {latest['root_volume'].mean():.1f} cm³ | Avg growth: {root_df['growth_rate'].mean():.2f} cm/d
-Upper shelf: {u['temperature']}°C, {u['humidity']}% RH | Lower shelf: {l['temperature']}°C, {l['humidity']}% RH
-Optimal: 20-26°C, 60-75% RH. Be specific and concise."""
-    try:
-        r = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={api_key}",
-            headers={"Content-Type":"application/json"},
-            json={"contents":[{"parts":[{"text":f"{ctx}\n\nUser: {msg}"}]}],
-                  "generationConfig":{"temperature":0.7,"maxOutputTokens":700}},
-            timeout=30,
-        )
-        if r.status_code == 200:
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
-        if r.status_code == 429:
-            return "⏳ Rate limited — please wait 60 s and retry."
-        return fallback(msg, root_df, env_df)
-    except Exception:
-        return fallback(msg, root_df, env_df)
+
+    # Build full per-tank data for richer answers
+    tank_summary = "\n".join([
+        f"  {row['tank']} ({row['shelf']} shelf): volume={row['root_volume']:.1f}cm³, "
+        f"length={row['root_length']:.1f}cm, growth={row['growth_rate']:.2f}cm/d, biomass={row['biomass']:.1f}g"
+        for _, row in latest.iterrows()
+    ])
+
+    ctx = f"""You are RootSight AI, an expert assistant for the Rezylix hydroponic root monitoring platform.
+
+SYSTEM SETUP:
+- 8 tanks across 2 shelves
+- Upper shelf: Tanks 1-4 | Lower shelf: Tanks 5-8
+- One front camera per tank
+- One temperature + humidity sensor per shelf
+
+CURRENT TANK DATA:
+{tank_summary}
+
+ENVIRONMENT:
+- Upper shelf: {u['temperature']}°C, {u['humidity']}% RH
+- Lower shelf: {l['temperature']}°C, {l['humidity']}% RH
+- Optimal: 20-26°C temperature, 60-75% humidity
+
+You can answer ANY question — about the data above, general hydroponics, plant science, agriculture, or anything else.
+Be helpful, specific, and conversational. Reference the actual data when relevant."""
+
+    for model in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]:
+        try:
+            r = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": f"{ctx}\n\nUser question: {msg}"}]}],
+                    "generationConfig": {"temperature": 0.7, "maxOutputTokens": 800}
+                },
+                timeout=30,
+            )
+            if r.status_code == 200:
+                return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            if r.status_code == 429:
+                return "⏳ Rate limited — please wait 60 seconds and try again."
+            if r.status_code == 400:
+                continue  # try next model
+        except Exception:
+            continue
+
+    return fallback(msg, root_df, env_df)
 
 
 def fallback(msg, root_df, env_df):
